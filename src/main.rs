@@ -29,7 +29,8 @@ struct ConfigCredentials {
 async fn main() {
     let val = get_value();
     let chosen = get_map(val);
-    play(chosen).await;
+    play_sonos(chosen);
+    // play_spotify(chosen).await;
 }
 
 fn load_file(path: &str) -> io::Result<String> {
@@ -42,12 +43,11 @@ fn parse_credentials(toml: &str) -> ConfigCredentials {
 
 fn load_credentials() -> ConfigCredentials {
     let file_contents = load_file("secrets.toml").expect("ERROR");
-    print!("{}", file_contents);
     return parse_credentials(&file_contents);
 }
 
 fn get_value() -> i32 {
-    return 1;
+    return 2;
 }
 
 fn get_map(id: i32) -> &'static str {
@@ -66,7 +66,23 @@ fn create_spotify_creds(config: ConfigCredentials) -> Credentials {
     return Credentials::new(&config.client_id, &config.client_secret);
 }
 
-async fn play(id: &str) {
+fn play_sonos(id: &str) {
+    let devices = sonos::discover().unwrap();
+    print!("{:?}", devices);
+    let sonos = devices
+        .iter()
+        .find(|d| d.name == "Sonos Move")
+        .expect("Couldn't find Sonos Move");
+    print!("{:?}", sonos);
+    // sonos.clear_queue().unwrap();
+    sonos
+        .queue_track("https://open.spotify.com/album/7m7F7SQ3BXvIpvOgjW51Gp")
+        .unwrap();
+    // sonos.set_volume(2).unwrap();
+    // sonos.play().unwrap();
+}
+
+async fn play_spotify(id: &str) {
     let creds_obj = load_credentials();
     let creds = create_spotify_creds(creds_obj);
 
@@ -90,9 +106,8 @@ async fn play(id: &str) {
     let devices = spotify.device().await;
 
     let device = devices.expect("Error grabbing devices");
-    // print!("{:?}", device);
+    print!("{:?}", device);
     let device_id = "044a9398b7f6ef3ce8b1860ff9d2f08f2fc481a6";
-    print!("{}", id);
     spotify
         .start_uris_playback(
             once(&TrackId::from_id(id).unwrap() as &dyn PlayableId),
