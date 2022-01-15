@@ -16,3 +16,5 @@ Cargo.lock
 
 *.iml
 .idea
+secrets.toml
+.spotify_token_cache.json

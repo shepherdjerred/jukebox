@@ -1,77 +1,104 @@
-// Example of communication with a smart card.
+use rspotify::model::Device;
+use rspotify::model::TrackId;
+use rspotify::prelude::*;
+use rspotify::scopes;
+use rspotify::AuthCodePkceSpotify;
+use rspotify::Config;
+use rspotify::Credentials;
+use rspotify::OAuth;
+use rspotify::DEFAULT_API_PREFIX;
+use rspotify::DEFAULT_CACHE_PATH;
+use rspotify::DEFAULT_PAGINATION_CHUNKS;
+use serde::Deserialize;
+use std::collections::HashMap;
+use std::fs;
+use std::io;
+use std::iter::once;
+use std::path::PathBuf;
 
-extern crate pcsc;
+#[derive(Debug)]
+struct AppConfig {}
 
-use pcsc::*;
+#[derive(Debug, Deserialize)]
+struct ConfigCredentials {
+    client_id: String,
+    client_secret: String,
+}
 
-fn main() {
-    // Get a context.
-    let ctx = Context::establish(Scope::User).expect("failed to establish context");
+#[tokio::main]
+async fn main() {
+    let val = get_value();
+    let chosen = get_map(val);
+    play(chosen).await;
+}
 
-    // List connected readers.
-    let mut readers_buf = [0; 2048];
-    let readers = ctx.list_readers(&mut readers_buf).expect("failed to list readers").collect::<Vec<_>>();
-    println!("Readers: {:?}", readers);
+fn load_file(path: &str) -> io::Result<String> {
+    return fs::read_to_string(path);
+}
 
-    if readers.is_empty() {
-        return;
-    }
+fn parse_credentials(toml: &str) -> ConfigCredentials {
+    return toml::from_str(toml).unwrap();
+}
 
-    loop {
-        {
-            // Try to connect to a card in the first reader.
-            let mut card = ctx.connect(readers[0], ShareMode::Shared, Protocols::ANY).expect("failed to connect to card");
+fn load_credentials() -> ConfigCredentials {
+    let file_contents = load_file("secrets.toml").expect("ERROR");
+    print!("{}", file_contents);
+    return parse_credentials(&file_contents);
+}
 
-            {
-                // Start an exclusive transaction (not required -- can work on card directly).
-                let tx = card.transaction().expect("failed to begin card transaction");
+fn get_value() -> i32 {
+    return 1;
+}
 
-                // Get the card status.
-                let (names_len, _atr_len) = tx.status2_len().expect("failed to get the status length");
-                let mut names_buf = vec![0; names_len];
-                let mut atr_buf = [0; MAX_ATR_SIZE];
-                let status = tx.status2(&mut names_buf, &mut atr_buf).expect("failed to get card status");
-                println!("Status from status: {:?}", status.status());
-                println!("Reader names from status: {:?}", status.reader_names().collect::<Vec<_>>());
-                if let Some(protocol) = status.protocol2() {
-                    println!("Protocol from status: {:?}", protocol);
-                } else {
-                    println!("Protocol from status: directly connected");
-                }
-                println!("ATR from status: {:?}", status.atr());
+fn get_map(id: i32) -> &'static str {
+    let x: HashMap<i32, &str> = [
+        // T-Swift
+        (1, "1p80LdxRV74UKvL8gnD7ky"),
+        // Kanye
+        (2, "4fzsfWzRhPawzqhX8Qt9F3"),
+    ]
+    .into_iter()
+    .collect();
+    return x[&id];
+}
 
-                // Get the card's ATR.
-                let mut atr_buf = [0; MAX_ATR_SIZE];
-                let atr = tx.get_attribute(Attribute::AtrString, &mut atr_buf).expect("failed to get ATR attribute");
-                println!("ATR from attribute: {:?}", atr);
+fn create_spotify_creds(config: ConfigCredentials) -> Credentials {
+    return Credentials::new(&config.client_id, &config.client_secret);
+}
 
-                // Get some attribute.
-                let mut ifd_version_buf = [0; 4];
-                let ifd_version = tx.get_attribute(Attribute::VendorIfdVersion, &mut ifd_version_buf).expect("failed to get vendor IFD version attribute");
-                println!("Vendor IFD version: {:?}", ifd_version);
+async fn play(id: &str) {
+    let creds_obj = load_credentials();
+    let creds = create_spotify_creds(creds_obj);
 
-                // Get some other attribute.
-                // This time we allocate a buffer of the needed length.
-                let vendor_name_len = tx.get_attribute_len(Attribute::VendorName).expect("failed to get the vendor name attribute length");
-                let mut vendor_name_buf = vec![0; vendor_name_len];
-                let vendor_name = tx.get_attribute(Attribute::VendorName, &mut vendor_name_buf).expect("failed to get vendor name attribute");
-                println!("Vendor name: {}", std::str::from_utf8(vendor_name).unwrap());
+    let oauth = OAuth {
+        redirect_uri: "http://localhost:8888/callback".to_string(),
+        scopes: scopes!("app-remote-control user-read-playback-state user-modify-playback-state"),
+        ..Default::default()
+    };
 
-                // Can either end explicity, which allows error handling,
-                // and setting the disposition method, or leave it to drop, which
-                // swallows any error and hardcodes LeaveCard.
-                tx.end(Disposition::LeaveCard).map_err(|(_, err)| err).expect("failed to end transaction");
-            }
+    let config = Config {
+        prefix: String::from(DEFAULT_API_PREFIX),
+        cache_path: PathBuf::from(DEFAULT_CACHE_PATH),
+        pagination_chunks: DEFAULT_PAGINATION_CHUNKS,
+        token_cached: true,
+        token_refreshing: true,
+    };
+    let mut spotify = AuthCodePkceSpotify::with_config(creds.clone(), oauth.clone(), config);
+    let url = spotify.get_authorize_url(None).unwrap();
+    spotify.prompt_for_token(&url).await.unwrap();
 
-            // Can either disconnect explicity, which allows error handling,
-            // and setting the disposition method, or leave it to drop, which
-            // swallows any error and hardcodes ResetCard.
-            card.disconnect(Disposition::ResetCard).map_err(|(_, err)| err).expect("failed to disconnect from card");
-        }
-    }
+    let devices = spotify.device().await;
 
-    // Can either release explicity, which allows error handling,
-    // or leave it to drop, which swallows any error.
-    // The function fails if there are any live clones.
-    ctx.release().map_err(|(_, err)| err).expect("failed to release context");
+    let device = devices.expect("Error grabbing devices");
+    // print!("{:?}", device);
+    let device_id = "044a9398b7f6ef3ce8b1860ff9d2f08f2fc481a6";
+    print!("{}", id);
+    spotify
+        .start_uris_playback(
+            once(&TrackId::from_id(id).unwrap() as &dyn PlayableId),
+            Some(device_id),
+            None,
+            None,
+        )
+        .await;
 }
