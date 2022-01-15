@@ -6,4 +6,4 @@ edition = "2021"
 [dependencies]
 pcsc = "2"
 sonos = "0.1.4"
-rspotify = "0.10.0"
+rspotify = "0.11.3"
